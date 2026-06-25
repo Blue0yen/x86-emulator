@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>自作x86（32bit）仮想CPUエミュレータ・Windows XP ISO完全対応版</title>
+    <style>
+        body { font-family: 'Courier New', monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; }
+        h1 { color: #569cd6; border-bottom: 2px solid #333; padding-bottom: 10px; }
+        h3 { color: #4ec9b0; margin-top: 20px; }
+        #log { background: #000; border: 1px solid #333; height: 500px; overflow-y: scroll; padding: 10px; white-space: pre-wrap; font-size: 11px; color: #b5cea8; font-family: 'Courier New'; line-height: 1.4; }
+        .control { margin: 20px 0; background: #252526; padding: 15px; border-radius: 4px; }
+        button { padding: 8px 20px; background: #0e639c; color: white; border: none; cursor: pointer; font-weight: bold; border-radius: 3px; }
+        button:hover { background: #1177bb; }
+        button:disabled { background: #444; color: #888; cursor: not-allowed; }
+        .reg-table { border-collapse: collapse; margin-bottom: 15px; width: 100%; max-width: 900px; }
+        .reg-table th, .reg-table td { border: 1px solid #444; padding: 6px 12px; text-align: left; font-size: 13px; }
+        .reg-table th { background: #2d2d2d; color: #569cd6; }
+        .reg-table td { color: #ce9178; }
+        .flag { display: inline-block; margin-right: 15px; padding: 4px 8px; background: #2d2d2d; border-radius: 3px; font-size: 12px; }
+        .flag.set { background: #0e639c; color: #fff; }
+        .help-box { background: #2d2d2d; padding: 10px; border-left: 4px solid #0e639c; margin-top: 10px; font-size: 12px; color: #aaa; line-height: 1.6; }
+        .debug-section { background: #1a1a1a; border: 1px solid #555; padding: 12px; margin: 10px 0; border-radius: 3px; }
+        .debug-section h4 { margin: 0 0 8px 0; color: #4ec9b0; font-size: 13px; }
+        .debug-item { margin: 4px 0; font-size: 12px; }
+        .success { color: #51cf66; }
+        .error { color: #ff6b6b; }
+        .info { color: #74c0fc; }
+        .warn { color: #ffd43b; }
+        .tree { margin-left: 20px; }
+        .tab { display: none; }
+        .tab.active { display: block; }
+        .tab-buttons { margin-bottom: 10px; }
+        .tab-btn { padding: 5px 15px; background: #444; margin-right: 5px; cursor: pointer; border-radius: 3px; }
+        .tab-btn.active { background: #0e639c; }
+    </style>
+</head>
+<body>
+
+    <h1>x86（32bit）仮想CPUエミュレータ - Windows XP ISO完全対応版</h1>
+    
+    <h3>仮想CPUレジスタ状態</h3>
+    <table class="reg-table">
+        <tr>
+            <th>EAX</th><td id="reg-EAX">0x00000000</td>
+            <th>EBX</th><td id="reg-EBX">0x00000000</td>
+            <th>ECX</th><td id="reg-ECX">0x00000000</td>
+            <th>EDX</th><td id="reg-EDX">0x00000000</td>
+        </tr>
+        <tr>
+            <th>ESP</th><td id="reg-ESP">0x00007C00</td>
+            <th>EBP</th><td id="reg-EBP">0x00000000</td>
+            <th>ESI</th><td id="reg-ESI">0x00000000</td>
+            <th>EDI</th><td id="reg-EDI">0x00000000</td>
+        </tr>
+        <tr>
+            <th>PC (EIP)</th><td id="reg-PC" style="color: #ff8c00; font-weight: bold;">0x00007C00</td>
+            <td colspan="6"></td>
+        </tr>
+    </table>
+
+    <h3>フラグレジスタ (EFLAGS)</h3>
+    <div style="margin: 10px 0;">
+        <div class="flag" id="flag-CF">CF: 0</div>
+        <div class="flag" id="flag-PF">PF: 0</div>
+        <div class="flag" id="flag-AF">AF: 0</div>
+        <div class="flag" id="flag-ZF">ZF: 0</div>
+        <div class="flag" id="flag-SF">SF: 0</div>
+        <div class="flag" id="flag-OF">OF: 0</div>
+    </div>
+
+    <div class="control">
+        <label style="display:block; margin-bottom:10px;"><strong>ISO/バイナリファイルの選択</strong></label>
+        <input type="file" id="isoFile" accept=".iso,.bin,.img">
+        <button id="runBtn" disabled style="margin-left: 20px;">10ステップ実行</button>
+        <button id="runFastBtn" disabled style="margin-left: 10px; background: #228b22;">100ステップ実行</button>
+        
+        <div class="help-box">
+            ※テスト用：
+            <button id="dummyBtn" style="padding:2px 10px; background:#444; font-size:11px; margin-left:10px;">ダミープログラムロード</button>
+            <button id="hexViewBtn" style="padding:2px 10px; background:#555; font-size:11px; margin-left:5px;">メモリダンプ</button>
+        </div>
+    </div>
+
+    <h3>ISO解析ログ</h3>
+    <div class="tab-buttons">
+        <button class="tab-btn active" onclick="switchTab('iso-debug')">ISO解析</button>
+        <button class="tab-btn" onclick="switchTab('iso-tree')">ファイルツリー</button>
+        <button class="tab-btn" onclick="switchTab('cpu-log')">CPUログ</button>
+    </div>
+
+    <div id="iso-debug" class="tab active">
+        <div class="debug-section" id="isoDebugInfo">
+            ファイルを読み込んでください...
+        </div>
+    </div>
+
+    <div id="iso-tree" class="tab">
+        <div class="debug-section" id="fileTree">
+            ファイルツリーはここに表示されます...
+        </div>
+    </div>
+
+    <div id="cpu-log" class="tab">
+        <h3>CPU実行ログ</h3>
+        <div id="log">待機中...</div>
+    </div>
+
+    <script>
+        // =====================================================================
+        // 0. ユーティリティ
+        // =====================================================================
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.getElementById(tabName).classList.add('active');
+            event.target.classList.add('active');
+        }
+
+        // =====================================================================
+        // 1. 仮想システム定義
+        // =====================================================================
+        const memory = new Uint8Array(1024 * 1024 * 64);
+        let PC = 0x7C00;
+
+        const registers = {
+            EAX: 0, EBX: 0, ECX: 0, EDX: 0,
+            ESP: 0x7C00, EBP: 0, ESI: 0, EDI: 0
+        };
+        const regNames = ["EAX", "ECX", "EDX", "EBX", "ESP", "EBP", "ESI", "EDI"];
+
+        const flags = {
+            CF: false, PF: false, AF: false, ZF: false, SF: false, OF: false
+        };
+
+        const logDiv = document.getElementById('log');
+        const isoDebugDiv = document.getElementById('isoDebugInfo');
+        const fileTreeDiv = document.getElementById('fileTree');
+        
+        function addLog(text) {
+            logDiv.innerText += text + "\n";
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function addDebug(html) {
+            isoDebugDiv.innerHTML += html + "\n";
+        }
+
+        function updateRegisterUI() {
+            regNames.forEach(name => {
+                document.getElementById(`reg-${name}`).innerText = "0x" + (registers[name] >>> 0).toString(16).toUpperCase().padStart(8, '0');
+            });
+            document.getElementById('reg-PC').innerText = "0x" + PC.toString(16).toUpperCase().padStart(8, '0');
+            Object.keys(flags).forEach(flag => {
+                const elem = document.getElementById(`flag-${flag}`);
+                elem.innerText = `${flag}: ${flags[flag] ? 1 : 0}`;
+                if (flags[flag]) elem.classList.add('set');
+                else elem.classList.remove('set');
+            });
+        }
+
+        function updateFlags(result) {
+            result = result >>> 0;
+            flags.ZF = (result === 0);
+            flags.SF = ((result >>> 31) & 1) === 1;
+            const lowByte = result & 0xFF;
+            let bitCount = 0;
+            for (let i = 0; i < 8; i++) bitCount += (lowByte >>> i) & 1;
+            flags.PF = (bitCount % 2) === 0;
+        }
+
+        // =====================================================================
+        // 2. ISO 9660 ファイルシステム解析
+        // =====================================================================
+        class ISO9660Parser {
+            constructor(buffer) {
+                this.buffer = buffer;
+                this.pvdOffset = null;
+                this.rootDir = null;
+                this.files = [];
+            }
+
+            parse() {
+                const result = {
+                    success: false,
+                    pvd: null,
+                    rootDir: null,
+                    files: [],
+                    bootInfo: null
+                };
+
+                // PVD (Primary Volume Descriptor) はセクター16にある
+                const pvdSectorOffset = 16 * 2048;
+                if (pvdSectorOffset + 2048 > this.buffer.length) {
+                    return result;
+                }
+
+                const pvdData = this.buffer.slice(pvdSectorOffset, pvdSectorOffset + 2048);
+                const typeCode = pvdData[0];
+                const standardId = String.fromCharCode(...pvdData.slice(1, 6));
+
+                if (typeCode !== 1 || standardId !== "CD001") {
+                    return result;
+                }
+
+                result.pvd = { typeCode, standardId };
+
+                // ルートディレクトリエントリの位置（オフセット 156, リトルエンディアン 4バイト）
+                const rootDirLBA = this.readLittleEndian32(pvdData, 156);
+                const rootDirSize = this.readLittleEndian32(pvdData, 80);
+
+                result.rootDir = { lba: rootDirLBA, size: rootDirSize };
+
+                // ルートディレクトリを読込
+                const rootDirOffset = rootDirLBA * 2048;
+                const rootDirData = this.buffer.slice(rootDirOffset, rootDirOffset + rootDirSize);
+
+                this.parseDirectoryRecords(rootDirData, result);
+                result.success = true;
+
+                return result;
+            }
+
+            parseDirectoryRecords(dirData, result, depth = 0) {
+                let offset = 0;
+                while (offset < dirData.length) {
+                    const recLen = dirData[offset];
+                    if (recLen === 0) break;
+
+                    const rec = {
+                        dirFlag: (dirData[offset + 25] & 0x02) !== 0,
+                        dataLen: this.readLittleEndian32(dirData, offset + 10),
+                        lba: this.readLittleEndian32(dirData, offset + 2),
+                        identLen: dirData[offset + 32],
+                        ident: null
+                    };
+
+                    if (rec.identLen > 0) {
+                        rec.ident = String.fromCharCode(...dirData.slice(offset + 33, offset + 33 + rec.identLen));
+                    }
+
+                    // . と .. を除外
+                    if (rec.ident && rec.ident !== "\0" && rec.ident !== "\1") {
+                        result.files.push({
+                            name: rec.ident,
+                            lba: rec.lba,
+                            size: rec.dataLen,
+                            isDir: rec.dirFlag,
+                            depth: depth
+                        });
+                    }
+
+                    offset += recLen;
+                }
+            }
+
+            findFile(filename) {
+                return this.files.find(f => f.name.toUpperCase() === filename.toUpperCase());
+            }
+
+            readLittleEndian32(data, offset) {
+                return data[offset] | (data[offset + 1] << 8) | (data[offset + 2] << 16) | (data[offset + 3] << 24);
+            }
+        }
+
+        // =====================================================================
+        // 3. El Torito 解析
+        // =====================================================================
+        function parseElTorito(buffer) {
+            const result = {
+                valid: false,
+                bootRecordOffset: null,
+                catalogSector: null,
+                bootImages: []
+            };
+
+            // セクター17のブートレコード
+            const bootRecordOffset = 17 * 2048;
+            if (bootRecordOffset + 8 > buffer.length) return result;
+
+            const typeCode = buffer[bootRecordOffset];
+            const standardId = String.fromCharCode(...buffer.slice(bootRecordOffset + 1, bootRecordOffset + 6));
+
+            if (typeCode !== 0 || standardId !== "CD001") return result;
+
+            result.valid = true;
+            result.bootRecordOffset = bootRecordOffset;
+
+            // ブートカタログポインタ
+            const catalogSector = buffer[bootRecordOffset + 0x47] |
+                                  (buffer[bootRecordOffset + 0x48] << 8) |
+                                  (buffer[bootRecordOffset + 0x49] << 16) |
+                                  (buffer[bootRecordOffset + 0x4A] << 24);
+
+            result.catalogSector = catalogSector;
+
+            // ブートカタログエントリ
+            const catalogOffset = catalogSector * 2048;
+            if (catalogOffset + 32 > buffer.length) return result;
+
+            // 初期/デフォルトエントリ (オフセット +32)
+            const entryOffset = catalogOffset + 32;
+            if (entryOffset + 32 > buffer.length) return result;
+
+            const bootable = buffer[entryOffset];
+            const mediaType = buffer[entryOffset + 1];
+            const loadSegment = buffer[entryOffset + 2] | (buffer[entryOffset + 3] << 8);
+            const systemType = buffer[entryOffset + 4];
+            const sectorCount = buffer[entryOffset + 6] | (buffer[entryOffset + 7] << 8);
+            const imageLBA = buffer[entryOffset + 8] |
+                            (buffer[entryOffset + 9] << 8) |
+                            (buffer[entryOffset + 10] << 16) |
+                            (buffer[entryOffset + 11] << 24);
+
+            result.bootImages.push({
+                bootable: bootable === 0x88,
+                mediaType,
+                loadSegment,
+                systemType,
+                sectorCount,
+                imageLBA
+            });
+
+            return result;
+        }
+
+        // =====================================================================
+        // 4. ファイル読み込み
+        // =====================================================================
+        document.getElementById('isoFile').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            isoDebugDiv.innerHTML = `<div class="info">📂 ${file.name} を読み込み中...</div>`;
+            fileTreeDiv.innerHTML = "ツリーを生成中...";
+            logDiv.innerText = "準備中...";
+
+            reader.onload = function(event) {
+                const buffer = new Uint8Array(event.target.result);
+                let bootSectorData = null;
+
+                isoDebugDiv.innerHTML = `<div class="debug-section">
+                    <h4>📋 ファイル情報</h4>
+                    <div class="debug-item"><span class="info">ファイル名:</span> ${file.name}</div>
+                    <div class="debug-item"><span class="info">ファイルサイズ:</span> ${(buffer.length / 1024 / 1024).toFixed(2)} MB (${buffer.length} bytes)</div>
+                </div>`;
+
+                if (file.name.endsWith('.iso')) {
+                    // El Torito 解析
+                    const elTorito = parseElTorito(buffer);
+                    
+                    addDebug(`<div class="debug-section">
+                        <h4>🔍 El Torito ブート情報</h4>
+                        <div class="debug-item"><span class="info">検出:</span> ${elTorito.valid ? '<span class="success">✓ 有効</span>' : '<span class="error">✗ なし</span>'}</div>`);
+
+                    if (elTorito.valid) {
+                        addDebug(`<div class="debug-item"><span class="info">ブートレコード:</span> 0x${(elTorito.bootRecordOffset).toString(16).toUpperCase()} (セクター17)</div>`);
+                        addDebug(`<div class="debug-item"><span class="info">カタログセクター:</span> ${elTorito.catalogSector}</div>`);
+                        
+                        if (elTorito.bootImages.length > 0) {
+                            const img = elTorito.bootImages[0];
+                            addDebug(`<div class="tree"><span class="info">初期エントリ:</span>
+                                <div class="tree">
+                                    <div class="debug-item">Bootable: ${img.bootable ? '<span class="success">✓</span>' : '<span class="error">✗</span>'}</div>
+                                    <div class="debug-item">Media Type: 0x${img.mediaType.toString(16).toUpperCase()}</div>
+                                    <div class="debug-item">System Type: 0x${img.systemType.toString(16).toUpperCase()}</div>
+                                    <div class="debug-item">Sector Count: ${img.sectorCount}</div>
+                                    <div class="debug-item">Image LBA: ${img.imageLBA} (0x${(img.imageLBA * 2048).toString(16).toUpperCase()})</div>
+                                </div>
+                            </div>`);
+
+                            if (img.imageLBA > 0 && img.sectorCount > 0) {
+                                const imageOffset = img.imageLBA * 2048;
+                                if (imageOffset + 512 <= buffer.length) {
+                                    bootSectorData = buffer.slice(imageOffset, imageOffset + 512);
+                                    addDebug(`<div class="debug-item"><span class="success">✓ ブートイメージ抽出成功 (512 bytes)</span></div>`);
+                                }
+                            }
+                        }
+                    }
+                    addDebug(`</div>`);
+
+                    // ISO 9660 解析
+                    const iso = new ISO9660Parser(buffer);
+                    const parseResult = iso.parse();
+
+                    addDebug(`<div class="debug-section">
+                        <h4>📀 ISO 9660 ファイルシステム</h4>
+                        <div class="debug-item"><span class="info">解析:</span> ${parseResult.success ? '<span class="success">✓ 成功</span>' : '<span class="error">✗ 失敗</span>'}</div>`);
+
+                    if (parseResult.success && parseResult.pvd) {
+                        addDebug(`<div class="debug-item"><span class="info">Type Code:</span> ${parseResult.pvd.typeCode}</div>`);
+                        addDebug(`<div class="debug-item"><span class="info">Standard ID:</span> ${parseResult.pvd.standardId}</div>`);
+                        addDebug(`<div class="debug-item"><span class="info">Root Dir LBA:</span> ${parseResult.rootDir.lba}</div>`);
+                        addDebug(`<div class="debug-item"><span class="info">ファイル数:</span> ${parseResult.files.length}</div>`);
+                    }
+                    addDebug(`</div>`);
+
+                    // ファイルツリー生成
+                    if (parseResult.files.length > 0) {
+                        let treeHtml = `<div class="debug-section"><h4>🌳 ファイル一覧 (最初の50件)</h4>`;
+                        parseResult.files.slice(0, 50).forEach(f => {
+                            const indent = '&nbsp;'.repeat(f.depth * 4);
+                            const icon = f.isDir ? '📁' : '📄';
+                            treeHtml += `<div class="debug-item">${indent}${icon} <span class="info">${f.name}</span> (${f.size} bytes, LBA: ${f.lba})</div>`;
+                        });
+                        if (parseResult.files.length > 50) {
+                            treeHtml += `<div class="debug-item"><span class="warn">... 他 ${parseResult.files.length - 50} ファイル</span></div>`;
+                        }
+                        treeHtml += `</div>`;
+                        fileTreeDiv.innerHTML = treeHtml;
+
+                        // BOOT.BIN を検索
+                        const bootBin = parseResult.files.find(f => f.name.toUpperCase().includes('BOOT.BIN'));
+                        if (bootBin && !bootSectorData) {
+                            const bootOffset = bootBin.lba * 2048;
+                            if (bootOffset + 512 <= buffer.length) {
+                                bootSectorData = buffer.slice(bootOffset, bootOffset + 512);
+                                addDebug(`<div class="debug-section"><h4>✓ BOOT.BIN から抽出</h4><div class="debug-item">LBA: ${bootBin.lba}, Size: ${bootBin.size}</div></div>`);
+                            }
+                        }
+                    }
+                } else {
+                    // .bin / .img
+                    bootSectorData = buffer.slice(0, 512);
+                    addDebug(`<div class="debug-section"><h4>📦 バイナリファイル</h4><div class="debug-item">先頭512バイトをロード</div></div>`);
+                }
+
+                // メモリにロード
+                if (bootSectorData && bootSectorData.length > 0) {
+                    for (let i = 0; i < Math.min(512, bootSectorData.length); i++) {
+                        memory[0x7C00 + i] = bootSectorData[i];
+                    }
+                    logDiv.innerText = `✅ ブートコードを 0x7C00 に${bootSectorData.length}バイトロード\n\n`;
+                    document.getElementById('runBtn').disabled = false;
+                    document.getElementById('runFastBtn').disabled = false;
+                } else {
+                    logDiv.innerText = `❌ ブートコードの抽出に失敗\n`;
+                    document.getElementById('runBtn').disabled = true;
+                    document.getElementById('runFastBtn').disabled = true;
+                }
+
+                PC = 0x7C00;
+                updateRegisterUI();
+                switchTab('cpu-log');
+            };
+            reader.readAsArrayBuffer(file);
+        });
+
+        // =====================================================================
+        // 5. ダミープログラム
+        // =====================================================================
+        document.getElementById('dummyBtn').addEventListener('click', function() {
+            PC = 0x7C00;
+            memory.fill(0);
+            Object.assign(registers, { EAX: 0, EBX: 0, ECX: 0, EDX: 0, EBP: 0, ESI: 0, EDI: 0, ESP: 0x7C00 });
+            Object.assign(flags, { CF: false, PF: false, AF: false, ZF: false, SF: false, OF: false });
+            
+            let p = 0x7C00;
+            memory[p++] = 0xB8; memory[p++] = 0x0A; memory[p++] = 0x00; memory[p++] = 0x00; memory[p++] = 0x00;
+            memory[p++] = 0x05; memory[p++] = 0x05; memory[p++] = 0x00; memory[p++] = 0x00; memory[p++] = 0x00;
+            memory[p++] = 0x89; memory[p++] = 0xC3;
+            memory[p++] = 0x41;
+            memory[p++] = 0x3D; memory[p++] = 0x14; memory[p++] = 0x00; memory[p++] = 0x00; memory[p++] = 0x00;
+            memory[p++] = 0x74; memory[p++] = 0x02;
+            memory[p++] = 0x83; memory[p++] = 0xC1; memory[p++] = 0x01;
+            memory[p++] = 0x31; memory[p++] = 0xD2;
+            memory[p++] = 0xF4;
+
+            logDiv.innerText = "✅ ダミープログラム ロード完了\n";
+            isoDebugDiv.innerHTML = `<div class="success">テストプログラム: MOV EAX,10 → ADD EAX,5 → CMP EAX,20 → JE → XOR EDX,EDX → HLT</div>`;
+            updateRegisterUI();
+            document.getElementById('runBtn').disabled = false;
+            document.getElementById('runFastBtn').disabled = false;
+        });
+
+        document.getElementById('hexViewBtn').addEventListener('click', function() {
+            let hex = "\n=== メモリダンプ (0x7C00 - 0x7C80) ===\n";
+            for (let i = 0x7C00; i < 0x7C80; i++) {
+                if ((i - 0x7C00) % 16 === 0) hex += "\n0x" + i.toString(16).toUpperCase().padStart(8, '0') + ": ";
+                hex += memory[i].toString(16).toUpperCase().padStart(2, '0') + " ";
+            }
+            addLog(hex);
+        });
+
+        // =====================================================================
+        // 6. 命令テーブル
+        // =====================================================================
+        const instructionTable = new Array(256);
+        for (let i = 0; i < 256; i++) instructionTable[i] = { name: `UNK_0x${i.toString(16).toUpperCase()}`, hasModRM: false, fixedLength: 1 };
+
+        instructionTable[0x90] = { name: "NOP", hasModRM: false, fixedLength: 1 };
+        instructionTable[0xB8] = { name: "MOV EAX, Iv", hasModRM: false, fixedLength: 5 };
+        instructionTable[0xB9] = { name: "MOV ECX, Iv", hasModRM: false, fixedLength: 5 };
+        instructionTable[0xBA] = { name: "MOV EDX, Iv", hasModRM: false, fixedLength: 5 };
+        instructionTable[0xBB] = { name: "MOV EBX, Iv", hasModRM: false, fixedLength: 5 };
+        instructionTable[0x05] = { name: "ADD EAX, Iv", hasModRM: false, fixedLength: 5 };
+        instructionTable[0x2D] = { name: "SUB EAX, Iv", hasModRM: false, fixedLength: 5 };
+        instructionTable[0x89] = { name: "MOV Ev, Gv", hasModRM: true };
+        instructionTable[0x41] = { name: "INC ECX", hasModRM: false, fixedLength: 1 };
+        instructionTable[0x3D] = { name: "CMP EAX, Iv", hasModRM: false, fixedLength: 5 };
+        instructionTable[0x74] = { name: "JE Jb", hasModRM: false, fixedLength: 2 };
+        instructionTable[0x31] = { name: "XOR Ev, Gv", hasModRM: true };
+        instructionTable[0x83] = { name: "ADD Ev, Ib", hasModRM: true };
+        instructionTable[0xF4] = { name: "HLT", hasModRM: false, fixedLength: 1 };
+        instructionTable[0xEB] = { name: "JMP Jb", hasModRM: false, fixedLength: 2 };
+
+        function parseModRM(modRMByte) {
+            return { mod: (modRMByte >> 6) & 0x03, reg: (modRMByte >> 3) & 0x07, rm: modRMByte & 0x07 };
+        }
+
+        // =====================================================================
+        // 7. CPU実行エンジン
+        // =====================================================================
+        function tick() {
+            let currentPC = PC;
+            let opcode = memory[PC];
+            let instr = instructionTable[opcode];
+            let instrLength = instr.fixedLength || 1;
+            let modRM = null;
+
+            if (instr.hasModRM) {
+                modRM = parseModRM(memory[PC + 1]);
+                instrLength = 2;
+            }
+
+            let hexOp = "";
+            for (let i = 0; i < Math.min(instrLength, 6); i++) {
+                hexOp += memory[currentPC + i].toString(16).toUpperCase().padStart(2, '0') + " ";
+            }
+            addLog(`[0x${currentPC.toString(16).toUpperCase().padStart(8, '0')}] ${hexOp.padEnd(18, ' ')} ${instr.name}`);
+
+            let halted = false;
+
+            if (opcode === 0x90) { PC += instrLength; }
+            else if (opcode === 0xEB) {
+                let offset = memory[currentPC + 1];
+                if (offset & 0x80) offset -= 0x100;
+                PC += instrLength + offset;
+            }
+            else if (opcode === 0xB8 || opcode === 0xB9 || opcode === 0xBA || opcode === 0xBB) {
+                let regIdx = opcode - 0xB8;
+                let val = memory[currentPC + 1] | (memory[currentPC + 2] << 8) | (memory[currentPC + 3] << 16) | (memory[currentPC + 4] << 24);
+                registers[regNames[regIdx]] = val >>> 0;
+                PC += instrLength;
+            }
+            else if (opcode === 0x05) {
+                let val = memory[currentPC + 1] | (memory[currentPC + 2] << 8) | (memory[currentPC + 3] << 16) | (memory[currentPC + 4] << 24);
+                registers.EAX = (registers.EAX + val) >>> 0;
+                updateFlags(registers.EAX);
+                PC += instrLength;
+            }
+            else if (opcode === 0x2D) {
+                let val = memory[currentPC + 1] | (memory[currentPC + 2] << 8) | (memory[currentPC + 3] << 16) | (memory[currentPC + 4] << 24);
+                registers.EAX = (registers.EAX - val) >>> 0;
+                updateFlags(registers.EAX);
+                PC += instrLength;
+            }
+            else if (opcode === 0x89 && modRM && modRM.mod === 3) {
+                registers[regNames[modRM.rm]] = registers[regNames[modRM.reg]];
+                PC += instrLength;
+            }
+            else if (opcode === 0x41) {
+                registers.ECX = (registers.ECX + 1) >>> 0;
+                updateFlags(registers.ECX);
+                PC += instrLength;
+            }
+            else if (opcode === 0x3D) {
+                let val = memory[currentPC + 1] | (memory[currentPC + 2] << 8) | (memory[currentPC + 3] << 16) | (memory[currentPC + 4] << 24);
+                let result = (registers.EAX - val) >>> 0;
+                updateFlags(result);
+                PC += instrLength;
+            }
+            else if (opcode === 0x74) {
+                let offset = memory[currentPC + 1];
+                if (offset & 0x80) offset -= 0x100;
+                if (flags.ZF) PC += instrLength + offset;
+                else PC += instrLength;
+            }
+            else if (opcode === 0x31 && modRM && modRM.mod === 3) {
+                registers[regNames[modRM.rm]] = (registers[regNames[modRM.rm]] ^ registers[regNames[modRM.reg]]) >>> 0;
+                PC += instrLength;
+            }
+            else if (opcode === 0x83 && modRM) {
+                let displacement = memory[currentPC + 2];
+                if (displacement & 0x80) displacement -= 0x100;
+                registers[regNames[modRM.rm]] = (registers[regNames[modRM.rm]] + displacement) >>> 0;
+                PC += instrLength + 1;
+            }
+            else if (opcode === 0xF4) {
+                addLog(`   ↳ ⛔ CPU停止`);
+                halted = true;
+            }
+            else {
+                PC += instrLength;
+                if (instr.name.includes("UNK")) {
+                    addLog(`❌ 未実装命令 (0x${opcode.toString(16).toUpperCase()})`);
+                    return false;
+                }
+            }
+
+            updateRegisterUI();
+            return !halted;
+        }
+
+        document.getElementById('runBtn').addEventListener('click', function() {
+            addLog("\n--- 10ステップ実行 ---");
+            for (let i = 0; i < 10; i++) if (!tick()) break;
+        });
+
+        document.getElementById('runFastBtn').addEventListener('click', function() {
+            addLog("\n--- 100ステップ実行 ---");
+            for (let i = 0; i < 100; i++) if (!tick()) break;
+        });
+
+        updateRegisterUI();
+    </script>
+</body>
+</html>
